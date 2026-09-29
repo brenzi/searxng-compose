@@ -1,0 +1,22 @@
+# Minimal overlay; everything else inherits SearXNG's maintained defaults.
+# secret_key and base_url come from SEARXNG_SECRET / SEARXNG_BASE_URL (see .env).
+use_default_settings: true
+
+general:
+  instance_name: "SearXNG"
+
+search:
+  safe_search: 0
+  default_lang: "all"
+  autocomplete: ""
+  formats:
+    - html
+    - json        # required by mcp-searxng
+
+server:
+  limiter: true           # bot protection, needs valkey + limiter.toml
+  public_instance: false
+  image_proxy: true
+
+valkey:
+  url: valkey://valkey:6379/0

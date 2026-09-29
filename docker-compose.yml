@@ -1,0 +1,106 @@
+# SearXNG + mcp-searxng (Streamable HTTP), published on configurable ports
+# for a reverse proxy (nginx + certbot) running on the host.
+#
+#   host nginx ──► BIND_ADDRESS:SEARXNG_PORT ──► searxng:8080
+#              └─► BIND_ADDRESS:MCP_PORT     ──► mcp-searxng:3000 ──► 127.0.0.1:8080 (internal)
+#
+# searxng and mcp-searxng share gluetun's network stack: everything they fetch
+# (engine queries, images, web_url_read) leaves through the ProtonVPN tunnel or
+# not at all. Inbound traffic from host nginx is unaffected.
+#
+# All tunables live in .env (copy .env.example → .env).
+# The fixed subnet makes the Docker gateway (172.30.0.1) predictable: that is the
+# source IP SearXNG and mcp-searxng see for requests from host nginx, and the
+# only address they trust X-Forwarded-For from. Change it → update limiter.toml too.
+
+name: searxng-mcp
+
+services:
+  gluetun:
+    image: docker.io/qmcgaw/gluetun:v3.41   # >= v3.41: attached containers resolve service names
+    container_name: searxng-gluetun
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=protonvpn
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=${PROTON_WG_PRIVATE_KEY:?set PROTON_WG_PRIVATE_KEY in .env}
+      - SERVER_COUNTRIES=${VPN_COUNTRIES:?set VPN_COUNTRIES in .env}
+    # searxng and mcp-searxng live in this network stack, so their ports are published here
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${SEARXNG_PORT:-8080}:8080"
+      - "${BIND_ADDRESS:-127.0.0.1}:${MCP_PORT:-3000}:3000"
+    networks:
+      - backend
+
+  searxng:
+    image: docker.io/searxng/searxng:${SEARXNG_VERSION:-latest}
+    container_name: searxng-core
+    restart: unless-stopped
+    network_mode: service:gluetun
+    environment:
+      - SEARXNG_BASE_URL=${SEARXNG_BASE_URL:?set SEARXNG_BASE_URL in .env}
+      - SEARXNG_SECRET=${SEARXNG_SECRET:?set SEARXNG_SECRET in .env}
+    volumes:
+      - ./searxng/:/etc/searxng/
+      - searxng-data:/var/cache/searxng/
+    depends_on:
+      gluetun:
+        condition: service_healthy   # some engines fetch data at startup
+      valkey:
+        condition: service_started
+
+  valkey:
+    image: docker.io/valkey/valkey:9-alpine
+    container_name: searxng-valkey
+    restart: unless-stopped
+    command: valkey-server --save 30 1 --loglevel warning
+    volumes:
+      - valkey-data:/data/
+    networks:
+      - backend
+
+  mcp-searxng:
+    image: docker.io/isokoliuk/mcp-searxng:${MCP_SEARXNG_VERSION:-latest}
+    container_name: mcp-searxng
+    restart: unless-stopped
+    network_mode: service:gluetun
+    environment:
+      # --- upstream: SearXNG in the same network stack (bypasses host nginx)
+      - SEARXNG_URL=http://127.0.0.1:8080
+      - SEARXNG_DEFAULT_LANGUAGE=${MCP_DEFAULT_LANGUAGE:-all}
+      - SEARXNG_MAX_RESULTS=${MCP_MAX_RESULTS:-10}
+      - SEARXNG_MAX_RESULT_CHARS=${MCP_MAX_RESULT_CHARS:-500}
+      # --- HTTP transport (container side is fixed; host side is MCP_PORT)
+      - MCP_HTTP_PORT=3000
+      - MCP_HTTP_HOST=0.0.0.0
+      # Trust X-Forwarded-For only from the Docker gateway (= host nginx)
+      - MCP_HTTP_TRUST_PROXY=172.30.0.1
+      # --- hardened mode: bearer token + Host/Origin allowlists
+      - MCP_HTTP_HARDEN=true
+      - MCP_HTTP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?set MCP_AUTH_TOKEN in .env}
+      - MCP_HTTP_ALLOWED_ORIGINS=https://${MCP_DOMAIN:?set MCP_DOMAIN in .env}
+      - MCP_HTTP_ALLOWED_HOSTS=${MCP_DOMAIN},127.0.0.1:${MCP_PORT:-3000},localhost:${MCP_PORT:-3000}
+      # --- MCP-side rate limits (SearXNG's limiter does not cover this endpoint)
+      - MCP_RATE_WINDOW_MS=60000
+      - MCP_RATE_INIT_MAX=${MCP_RATE_INIT_MAX:-20}
+      - MCP_RATE_SESSION_MAX=${MCP_RATE_SESSION_MAX:-300}
+    depends_on:
+      gluetun:
+        condition: service_healthy
+      searxng:
+        condition: service_started
+
+networks:
+  backend:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          gateway: 172.30.0.1
+
+volumes:
+  searxng-data:
+  valkey-data:

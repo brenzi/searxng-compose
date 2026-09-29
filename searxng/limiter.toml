@@ -1,0 +1,23 @@
+# Only overrides; SearXNG merges this with its built-in defaults.
+[botdetection]
+ipv4_prefix = 32
+ipv6_prefix = 48
+
+# Host nginx reaches the container via the Docker gateway of the fixed
+# subnet in docker-compose.yml. Trust X-Forwarded-For only from there.
+trusted_proxies = [
+  '127.0.0.0/8',
+  '::1',
+  '172.30.0.1/32',
+]
+
+[botdetection.ip_limit]
+# Enable if browser users get rate-limited too eagerly (adds a CSS token check).
+link_token = false
+
+[botdetection.ip_lists]
+# mcp-searxng shares gluetun's network stack and calls SearXNG via 127.0.0.1
+# without browser headers; pass it so the limiter doesn't block it as a bot.
+pass_ip = [
+  '127.0.0.1/32',
+]
