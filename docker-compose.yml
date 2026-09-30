@@ -83,7 +83,7 @@ services:
       - MCP_HTTP_HARDEN=true
       - MCP_HTTP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?set MCP_AUTH_TOKEN in .env}
       - MCP_HTTP_ALLOWED_ORIGINS=https://${MCP_DOMAIN:?set MCP_DOMAIN in .env}
-      - MCP_HTTP_ALLOWED_HOSTS=${MCP_DOMAIN},127.0.0.1:${MCP_PORT:-3000},localhost:${MCP_PORT:-3000}
+      - MCP_HTTP_ALLOWED_HOSTS=${MCP_ALLOWED_HOSTS:-${MCP_DOMAIN},127.0.0.1:${MCP_PORT:-3000},localhost:${MCP_PORT:-3000}}
       # --- MCP-side rate limits (SearXNG's limiter does not cover this endpoint)
       - MCP_RATE_WINDOW_MS=60000
       - MCP_RATE_INIT_MAX=${MCP_RATE_INIT_MAX:-20}
